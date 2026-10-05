@@ -10,7 +10,7 @@
 #   exit0       failed: contract                  (exit code 0 is not success)
 #   nan         failed: diverged
 #   hang        infra/hung, then ok               (stall detected, job cancelled, retried)
-#   oom         infra/oom, then ok                (memory raised 1.5x)
+#   oom         infra/oom, then ok                (simulated OOM kill; memory raised 1.5x)
 #   ignore_beta failed: config_mismatch           (the program silently ignored --beta)
 #   slow        ok after restarts                 (checkpoint on SIGUSR1, requeue, resume)
 # The stage tolerates exactly those four failures (max_failures: 4); anything else blocks it.
@@ -22,7 +22,7 @@ run_root: ./runs
 command: >-
   PYTHONPATH={autoexp_src} {python} -m autoexp.canary --out {run_dir}
   --steps {steps} --lr 0.0003 --beta {beta} --seed {seed}
-  --seconds-per-step {seconds_per_step} --fault {fault} --oom-mb 1500
+  --seconds-per-step {seconds_per_step} --fault {fault}
 
 params:
   fault: [none, crash, preflight, exit0, nan, hang, oom, ignore_beta, slow]

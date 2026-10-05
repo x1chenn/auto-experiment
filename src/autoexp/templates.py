@@ -21,11 +21,21 @@ AGENTS_BLOCK = f"""{BEGIN}
 Every agent (any vendor, any model size) and every person follows this protocol.
 Sessions are disposable; the state lives in auto-experiment, not in your memory.
 
-**Boot, every session**
+**Boot, every session (and again after a context compaction)**
 1. `autoexp session start --agent <claude|codex|human> --model <model>` (a hook may already
    have done this; then `$AUTOEXP_SESSION` is set). Keep the session id.
-2. Read the current state: `autoexp handoff` (generated from the event log; never edit it).
-3. Claim before acting: `autoexp task claim <task-id> --session <sid>`.
+2. Read what we know: `autoexp memory` (long-term index: established findings, campaigns, journals).
+3. Read what is happening: `autoexp handoff` (generated from the event log; never edit it).
+4. For the campaign you work on, read its notebook (path listed in MEMORY).
+5. Claim before acting: `autoexp task claim <task-id> --session <sid>`.
+
+**Memory: write it down as you go, not at the end**
+- A result worth keeping becomes a finding with evidence:
+  `autoexp finding add "<claim>" --campaign C --stage S` (cites the frozen results table; numbers in
+  the claim are checked against it). Promote or refute with `autoexp finding update F<n> --status ... --why ...`.
+- Anything else worth remembering: `autoexp note "<text>" [--campaign C]`.
+- In a long session, record after every milestone; your context may be compacted at any time.
+- Never edit the generated archive (journals, notebooks, FINDINGS.md, MEMORY.md).
 
 **Rules**
 - Submit experiments only with `autoexp submit <spec.yaml>`; never call `sbatch` for experiments.

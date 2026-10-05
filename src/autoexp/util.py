@@ -126,13 +126,12 @@ def last_json_line(path: Path) -> Optional[dict]:
     return None
 
 
-@contextlib.contextmanager
-def short_lock(path: Path, timeout: float = 60.0, stale: float = 120.0) -> Iterator[None]:
-    """Mutual exclusion for a few milliseconds of work, safe across nodes.
+def try_lock(path: Path, timeout: float = 60.0, stale: float = 120.0) -> bool:
+    """Acquire a lock file, waiting up to ``timeout`` seconds; False if not acquired.
 
     Uses O_CREAT|O_EXCL on a lock file instead of flock: a crashed holder can
     never wedge everyone else, because a lock older than ``stale`` seconds is
-    broken. Never hold this around anything slow.
+    broken. ``stale`` must exceed the longest legitimate hold.
     """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -148,18 +147,30 @@ def short_lock(path: Path, timeout: float = 60.0, stale: float = 120.0) -> Itera
                     continue
             except FileNotFoundError:
                 continue
-            if time.time() > deadline:
-                raise TimeoutError(f"could not acquire {path}")
+            if time.time() >= deadline:
+                return False
             time.sleep(0.05 + random.random() * 0.1)
+    os.write(fd, f"{socket.gethostname()} {os.getpid()} {now()}\n".encode())
+    os.close(fd)
+    return True
+
+
+def release_lock(path: Path) -> None:
     try:
-        os.write(fd, f"{socket.gethostname()} {os.getpid()} {now()}\n".encode())
-        os.close(fd)
+        Path(path).unlink()
+    except FileNotFoundError:
+        pass
+
+
+@contextlib.contextmanager
+def short_lock(path: Path, timeout: float = 60.0, stale: float = 120.0) -> Iterator[None]:
+    """Mutual exclusion for a few milliseconds of work, safe across nodes."""
+    if not try_lock(path, timeout, stale):
+        raise TimeoutError(f"could not acquire {path}")
+    try:
         yield
     finally:
-        try:
-            path.unlink()
-        except FileNotFoundError:
-            pass
+        release_lock(path)
 
 
 # ---------------------------------------------------------------- templates

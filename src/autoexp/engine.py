@@ -18,6 +18,7 @@ No language model is involved anywhere in this module.
 from __future__ import annotations
 
 import math
+import os
 import re
 import shlex
 import subprocess
@@ -33,7 +34,8 @@ from .events import EventLog, State, class_family
 from .slurm import Backend, JobInfo, render_sbatch
 from .spec import Spec
 from .util import (age_seconds, atomic_write, file_hash, format_time_s, now, parse_mem_mb,
-                   parse_time_s, read_json, stable_hash, subst, tail_lines, write_json)
+                   parse_time_s, read_json, release_lock, stable_hash, subst, tail_lines, try_lock,
+                   write_json)
 
 AUTOEXP_SRC = str(Path(__file__).resolve().parents[1])
 
@@ -46,6 +48,8 @@ DEFAULT_SIGNATURES = [
     {"pattern": r"oom[-_ ]kill|Out Of Memory|out-of-memory handler|MemoryError", "class": "infra/oom"},
     {"pattern": r"CUDA out of memory", "class": "code/gpu_oom"},
 ]
+
+TICK_LOCK_STALE_S = 300  # refreshed while held; only a dead holder's lock gets this old
 
 RETRYABLE = {"infra/node", "infra/preempt", "infra/unknown", "infra/runner", "infra/lost",
              "infra/oom", "infra/timeout", "infra/hung", "infra/requeue_failed"}
@@ -113,6 +117,7 @@ class Engine:
             "name": spec.name, "spec_path": str(frozen), "source": str(spec.source),
             "spec_hash": file_hash(frozen), "stages": spec.stage_names,
             "hypothesis": spec.data.get("hypothesis"), "test": bool(spec.data.get("test")),
+            "part": spec.data.get("part"), "success": spec.data.get("success"),
             "provenance": git_provenance(Path(spec.data["workdir"])),
         })
         # Submitting a campaign is the human approval of its first stage.
@@ -121,6 +126,7 @@ class Engine:
         return {"name": spec.name, "stages": {k: len(v) for k, v in plans.items()}}
 
     def approve(self, campaign: str, stage: str) -> None:
+        self.state = State.load(self.log)
         st = self.state.stage(campaign, stage)
         if st is None:
             raise ValueError(f"no stage {campaign}/{stage}")
@@ -130,6 +136,7 @@ class Engine:
                                    "reason": "approved by a human"})
 
     def cancel_campaign(self, campaign: str, reason: str = "cancelled by user") -> int:
+        self.state = State.load(self.log)
         n = 0
         for run in self.state.runs_of(campaign):
             a = self.state.active_attempt_of(run)
@@ -144,13 +151,38 @@ class Engine:
         return n
 
     # ------------------------------------------------------------ tick
-    def tick(self) -> Dict[str, Any]:
+    def tick(self, wait: float = 0.0) -> Dict[str, Any]:
+        """One reconciliation pass. Only one tick runs at a time across all processes
+        (brain, CLI, agents); a caller that cannot get the lock within ``wait`` seconds
+        skips its tick, because the holder is doing the same work."""
+        lock = self.cfg.home / ".tick.lock"
+        if not try_lock(lock, timeout=wait, stale=TICK_LOCK_STALE_S):
+            return {"skipped": "another tick is in progress"}
+        self._lock = lock
+        try:
+            # Decide on the latest events, not on whatever was loaded at construction.
+            self.state = State.load(self.log)
+            return self._tick()
+        finally:
+            release_lock(lock)
+
+    def _keep_lock(self) -> None:
+        """Refresh the tick lock during long ticks, so only a dead holder's lock goes stale."""
+        lock = getattr(self, "_lock", None)
+        if lock is not None:
+            try:
+                os.utime(lock, None)
+            except OSError:
+                pass
+
+    def _tick(self) -> Dict[str, Any]:
         summary = {"polled": 0, "finished": 0, "retried": 0, "submitted": 0, "stalled": 0}
         self._known_nodes = None
         active = self.state.active_attempts()
         infos = self.backend.query([a["job_id"] for a in active]) if active else {}
         summary["polled"] = len(active)
         for a in active:
+            self._keep_lock()
             info = infos.get(a["job_id"])
             if info is None:
                 self._handle_missing(a, summary)
@@ -395,6 +427,7 @@ class Engine:
         noops = contract_mod.detect_noops([r for r in runs if r["status"] == "succeeded"], echoes)
         for finding in noops:
             self.emit("noop.detected", dict(finding, campaign=campaign, stage=stage))
+        self._freeze_results(campaign, stage, runs)
         if len(failed) > allowed:
             classes = sorted({r.get("final_class") or "?" for r in failed})
             reason = f"{len(failed)}/{len(runs)} runs failed ({', '.join(classes)})"
@@ -410,6 +443,18 @@ class Engine:
         self.emit("stage.status", {"campaign": campaign, "stage": stage, "status": "succeeded",
                                    "reason": f"{len(runs) - len(failed)}/{len(runs)} runs satisfied the contract"})
         return True
+
+    def _freeze_results(self, campaign: str, stage: str, runs: List[Dict[str, Any]]) -> None:
+        """Snapshot the stage's results into the event log, so they survive even if
+        run directories are deleted or result files are overwritten later."""
+        from .brief import results_table
+        classes: Dict[str, int] = {}
+        for r in runs:
+            k = r.get("final_class") or r["status"]
+            classes[k] = classes.get(k, 0) + 1
+        table = results_table(self.state, self.spec(campaign).data, campaign, stage)
+        self.emit("stage.results", {"campaign": campaign, "stage": stage, "n_runs": len(runs),
+                                    "classes": classes, "table": table})
 
     def _echo_of(self, run: Dict[str, Any]) -> Optional[dict]:
         spec = self.spec(run["campaign"])
@@ -435,6 +480,7 @@ class Engine:
                            if self.state.runs[a["run_id"]]["campaign"] == run["campaign"])
             if active_total >= limit_total or active_c >= limit_c:
                 continue
+            self._keep_lock()
             if self._submit_attempt(run):
                 active_total += 1
                 n += 1

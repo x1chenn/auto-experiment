@@ -27,7 +27,7 @@ PLACEHOLDER_RE = re.compile(r"(?<!\$)\{([A-Za-z_][A-Za-z0-9_]*)\}")
 BUILTINS = {"seed", "run_dir", "python", "autoexp_src", "campaign", "stage", "run_id", "workdir", "attempt"}
 
 TOP_KEYS = {
-    "name", "hypothesis", "success", "notes", "test", "workdir", "run_root", "recipe", "recipe_file",
+    "name", "part", "hypothesis", "success", "notes", "test", "workdir", "run_root", "recipe", "recipe_file",
     "command", "params", "seeds", "fixed", "resources", "stages", "contract", "preflight",
     "progress", "resume", "retry", "analysis", "limits", "allow_unused",
 }

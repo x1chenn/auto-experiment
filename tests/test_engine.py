@@ -181,5 +181,32 @@ class EngineTests(unittest.TestCase):
         self.assertTrue(all(r["status"] == "cancelled" for r in eng.state.runs.values()))
 
 
+    def test_stale_engine_does_not_double_process(self):
+        stale = self.eng()
+        stale.create_campaign(self.spec)
+        stale.tick()
+        run, a = self.active(stale)[0]
+        self.finish(stale, run, a, status="preflight_failed", state="FAILED", node="n002")
+        fresh = self.eng()
+        fresh.tick()                      # another process handles the failure and resubmits
+        stale.tick()                      # the stale engine must reload, not redo it
+        again = self.eng()
+        finishes = [x for x in again.state.attempts.values() if x["run_id"] == run["run_id"] and x["finished"]]
+        self.assertEqual(len(finishes), 1)
+        self.assertEqual(len(again.state.runs[run["run_id"]]["attempts"]), 2)
+
+    def test_concurrent_tick_is_skipped(self):
+        from autoexp.util import release_lock, try_lock
+        eng = self.eng()
+        eng.create_campaign(self.spec)
+        lock = self.cfg.home / ".tick.lock"
+        self.assertTrue(try_lock(lock, timeout=0))
+        try:
+            self.assertIn("skipped", eng.tick())
+        finally:
+            release_lock(lock)
+        self.assertEqual(eng.tick()["submitted"], 2)
+
+
 if __name__ == "__main__":
     unittest.main()

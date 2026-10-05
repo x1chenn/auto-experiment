@@ -26,11 +26,31 @@ from .handoff import (baton_write, guess_tier, reconstruct_baton, render_handoff
                       session_start)
 
 PROTOCOL_REMINDER = """\
-[auto-experiment] You are session {sid}. Protocol: (1) the HANDOFF digest below is the current
-state; (2) claim work with `autoexp task claim <id> --session {sid}` before acting; (3) submit
-experiments only through `autoexp` (never raw sbatch); (4) before you stop, write a baton:
-`autoexp baton write --session {sid} --goal ... --done ... --next ...`.
+[auto-experiment] You are session {sid}. Protocol: (1) MEMORY below is what we know, HANDOFF is
+what is happening now; (2) claim work with `autoexp task claim <id> --session {sid}` before acting;
+(3) submit experiments only through `autoexp` (never raw sbatch); (4) record knowledge as you go:
+`autoexp finding add` (claims with evidence) and `autoexp note` (anything else); (5) before you stop,
+write a baton: `autoexp baton write --session {sid} --goal ... --done ... --next ...`.
 """
+
+COMPACTED = """\
+[auto-experiment] Your context was just compacted. Details you half-remember may be wrong: trust
+MEMORY, HANDOFF and `autoexp runs/log` over your recollection, and re-check numbers before using them.
+"""
+
+MEMORY_DIGEST_LINES = 80
+
+
+def _memory_digest(cfg: Config) -> str:
+    from .archive import archive_dir
+    path = archive_dir(cfg) / "MEMORY.md"
+    try:
+        lines = path.read_text().splitlines()
+    except OSError:
+        return "(no MEMORY.md yet: run `autoexp archive`)\n"
+    if len(lines) > MEMORY_DIGEST_LINES:
+        lines = lines[:MEMORY_DIGEST_LINES] + [f"... (`autoexp memory` for the rest)"]
+    return "\n".join(lines) + "\n"
 
 
 def _payload() -> Dict[str, Any]:
@@ -83,7 +103,12 @@ def _run(cfg: Config, event: str, vendor: str) -> int:
                 if model:
                     fh.write(f"export AUTOEXP_MODEL='{model}'\n")
         tier = state.sessions.get(sid, {}).get("tier") or guess_tier(model)
-        context = PROTOCOL_REMINDER.format(sid=sid) + "\n" + render_handoff(cfg, state, tier=tier)
+        context = PROTOCOL_REMINDER.format(sid=sid)
+        if payload.get("source") == "compact":
+            context += "\n" + COMPACTED
+            log.append("note.added", {"text": f"session {sid} was compacted and re-grounded from MEMORY/HANDOFF",
+                                      "kind": "compaction"})
+        context += "\n" + _memory_digest(cfg) + "\n" + render_handoff(cfg, state, tier=tier)
         print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart",
                                                  "additionalContext": context}}))
         return 0

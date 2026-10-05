@@ -21,6 +21,7 @@ src/autoexp/
   contract.py  artifact contracts and no-op parameter detection
   nodes.py     node health registry (shared by a group)
   handoff.py   sessions, batons, tasks, generated HANDOFF.md
+  archive.py   memory consolidation: journals, weekly rollups, notebooks, findings, MEMORY.md
   brief.py     deterministic report with robust statistics
   brain.py     long-lived supervisor job (lease, self-requeue)
   hooks.py     SessionStart/PreCompact/SessionEnd hooks for Claude Code and Codex
@@ -34,9 +35,11 @@ tools/         leakcheck.py (run before every commit)
 
 1. `autoexp session start --agent <claude|codex|human> --model <model>`; keep the session id
    (with hooks installed this happens automatically and `$AUTOEXP_SESSION` is set).
-2. `autoexp handoff` - the generated state of all campaigns, jobs, tasks and the last batons.
+2. `autoexp memory` - the long-term index (findings, campaigns, journals); then
+   `autoexp handoff` - what is happening now (campaigns, jobs, tasks, last batons).
 3. Claim before acting: `autoexp task claim <id> --session <sid>`.
-4. Before stopping: `autoexp baton write --session <sid> --goal ... --done ... --next ... --question ...`.
+4. Record as you go (`autoexp note`, `autoexp finding add`); after a context compaction, redo step 2.
+5. Before stopping: `autoexp baton write --session <sid> --goal ... --done ... --next ... --question ...`.
 
 ## Rules
 

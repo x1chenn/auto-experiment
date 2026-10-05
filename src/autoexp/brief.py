@@ -49,10 +49,11 @@ def results_table(state: State, spec_data: Dict[str, Any], campaign: str, stage:
             continue
         data = read_json(Path(run["run_dir"]) / rfile) or {}
         val = data.get(metric)
-        g = groups.setdefault(run["label"], {"label": run["label"], "values": [], "seeds": []})
+        g = groups.setdefault(run["label"], {"label": run["label"], "values": [], "seeds": [], "runs": []})
         if is_finite_number(val):
             g["values"].append(float(val))
             g["seeds"].append(run["seed"])
+            g["runs"].append(run["run_id"])
     rows = []
     for g in groups.values():
         vals = g["values"]
@@ -60,7 +61,8 @@ def results_table(state: State, spec_data: Dict[str, Any], campaign: str, stage:
             continue
         lo, hi = bootstrap_ci(vals)
         rows.append({"label": g["label"], "n": len(vals), "median": statistics.median(vals), "iqm": iqm(vals),
-                     "mean": statistics.mean(vals), "ci_lo": lo, "ci_hi": hi, "min": min(vals), "max": max(vals)})
+                     "mean": statistics.mean(vals), "ci_lo": lo, "ci_hi": hi, "min": min(vals), "max": max(vals),
+                     "runs": g["runs"], "values": [round(v, 6) for v in vals]})
     higher = analysis.get("higher_is_better", True)
     rows.sort(key=lambda r: r["iqm"], reverse=bool(higher))
     return {"metric": metric, "higher_is_better": higher, "rows": rows}
@@ -68,6 +70,19 @@ def results_table(state: State, spec_data: Dict[str, Any], campaign: str, stage:
 
 def _f(x: float) -> str:
     return "-" if x != x else f"{x:.2f}"
+
+
+def table_md(tab: Dict[str, Any]) -> List[str]:
+    """Markdown lines for a results table (as produced by results_table)."""
+    arrow = "higher is better" if tab.get("higher_is_better", True) else "lower is better"
+    out = [f"`{tab['metric']}` ({arrow}; CI = 95% bootstrap of the mean)", "",
+           "| arm | n | median | IQM | mean | 95% CI | min | max |", "|---|---|---|---|---|---|---|---|"]
+    for r in tab["rows"]:
+        out.append(f"| {r['label']} | {r['n']} | {_f(r['median'])} | {_f(r['iqm'])} | {_f(r['mean'])} | "
+                   f"[{_f(r['ci_lo'])}, {_f(r['ci_hi'])}] | {_f(r['min'])} | {_f(r['max'])} |")
+    if any(r["n"] < 3 for r in tab["rows"]):
+        out += ["", "_Fewer than 3 seeds in some arms: treat differences as anecdotal._"]
+    return out
 
 
 def render_brief(cfg: Config, state: State, specs: Dict[str, Dict[str, Any]], hours: float = 24.0) -> str:
@@ -109,15 +124,9 @@ def render_brief(cfg: Config, state: State, specs: Dict[str, Dict[str, Any]], ho
             if s["status"] in ("succeeded", "running", "failed"):
                 tab = results_table(state, specs.get(name) or {}, name, s["name"])
                 if tab and tab["rows"]:
-                    arrow = "higher is better" if tab["higher_is_better"] else "lower is better"
-                    add(f"\nResults, stage `{s['name']}`, `{tab['metric']}` ({arrow}; CI = 95% bootstrap of the mean):\n")
-                    add("| arm | n | median | IQM | mean | 95% CI | min | max |")
-                    add("|---|---|---|---|---|---|---|---|")
-                    for r in tab["rows"]:
-                        add(f"| {r['label']} | {r['n']} | {_f(r['median'])} | {_f(r['iqm'])} | {_f(r['mean'])} | "
-                            f"[{_f(r['ci_lo'])}, {_f(r['ci_hi'])}] | {_f(r['min'])} | {_f(r['max'])} |")
-                    if any(r["n"] < 3 for r in tab["rows"]):
-                        add("\n_Fewer than 3 seeds in some arms: treat differences as anecdotal._")
+                    add(f"\nResults, stage `{s['name']}`:")
+                    for line in table_md(tab):
+                        add(line)
         fails = [a for a in fin if state.runs[a["run_id"]]["campaign"] == name and a["classification"] != "ok"]
         if fails:
             add("\nFailures in the window:")

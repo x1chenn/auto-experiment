@@ -84,6 +84,8 @@ class State:
         self.noops: List[Dict[str, Any]] = []
         self.node_flags: List[Dict[str, Any]] = []
         self.brain: Dict[str, Any] = {}
+        self.findings: Dict[str, Dict[str, Any]] = {}
+        self.notes: List[Dict[str, Any]] = []
         self.by_session: Counter = Counter()
 
     # ------------------------------------------------------------ loading
@@ -113,6 +115,10 @@ class State:
             "spec_path": d["spec_path"],
             "spec_hash": d.get("spec_hash"),
             "hypothesis": d.get("hypothesis"),
+            "success": d.get("success"),
+            "part": d.get("part"),
+            "provenance": d.get("provenance"),
+            "results": {},
             "test": bool(d.get("test")),
             "created": ev["ts"],
             "actor": ev.get("actor"),
@@ -211,6 +217,27 @@ class State:
         a["finished_ts"] = ev["ts"]
 
     # ------------------------------------------------------------ other records
+    def _on_stage_results(self, ev, d):
+        c = self.campaigns.get(d["campaign"])
+        if c is not None:
+            c["results"][d["stage"]] = dict(d, ts=ev["ts"], seq=ev.get("seq"))
+
+    def _on_finding_added(self, ev, d):
+        fid = f"F{ev.get('seq')}"  # ids come from the event sequence: unique without coordination
+        self.findings[fid] = dict(d, id=fid, ts=ev["ts"], updated=ev["ts"], actor=ev.get("actor"), history=[])
+
+    def _on_finding_updated(self, ev, d):
+        f = self.findings.get(d["id"])
+        if f:
+            f["history"].append({"ts": ev["ts"], "from": f.get("status"), "to": d.get("status"), "why": d.get("why")})
+            for key in ("status", "superseded_by"):
+                if d.get(key):
+                    f[key] = d[key]
+            f["updated"] = ev["ts"]
+
+    def _on_note_added(self, ev, d):
+        self.notes.append(dict(d, ts=ev["ts"], actor=ev.get("actor")))
+
     def _on_noop_detected(self, ev, d):
         self.noops.append(dict(d, ts=ev["ts"]))
 

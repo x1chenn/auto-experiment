@@ -16,7 +16,8 @@ Faults (``--fault``):
   exit0             exits 0 without writing final_eval.json          -> contract
   nan               evaluation becomes NaN from mid-training          -> diverged
   hang              stops making progress on attempt 1 only          -> infra/hung, then ok
-  oom               allocates --oom-mb MiB on attempt 1 only          -> infra/oom, then ok
+  oom               simulated OOM kill on attempt 1 only (message + exit 137; --real-oom
+                    allocates --oom-mb MiB instead)                  -> infra/oom, then ok
   ignore_beta       silently ignores --beta (echoes the default)     -> config_mismatch
   slow              takes longer than its time limit; with resume enabled it is
                     checkpointed and requeued until it finishes      -> ok after restarts
@@ -113,10 +114,16 @@ class Training:
                 while True:
                     time.sleep(60)
             if a.fault == "oom" and self.step == half and attempt() == 1:
-                print(f"[canary] injected allocation of {a.oom_mb} MiB", flush=True)
-                hog = bytearray(a.oom_mb * 1024 * 1024)
-                for i in range(0, len(hog), 4096):
-                    hog[i] = 1
+                # Simulated, never real: on clusters where memory above --mem spills into swap a
+                # real overshoot does not die, it only slows down a shared node.
+                if a.real_oom:
+                    hog = bytearray(a.oom_mb * 1024 * 1024)
+                    for i in range(0, len(hog), 4096):
+                        hog[i] = 1
+                else:
+                    print("slurmstepd: error: Detected 1 oom_kill event in StepId=canary.batch. "
+                          "Some of the step tasks have been OOM Killed.", file=sys.stderr, flush=True)
+                    os._exit(137)
             if self.step % a.log_every == 0 or self.step == a.steps:
                 ret = expected_return(a.lr, a.seed, self.step, a.steps)
                 if a.fault == "nan" and self.step >= half:
@@ -158,6 +165,7 @@ def main(argv=None) -> int:
     p.add_argument("--ckpt-every", type=int, default=50)
     p.add_argument("--fault", choices=FAULTS, default="none")
     p.add_argument("--oom-mb", type=int, default=2048)
+    p.add_argument("--real-oom", action="store_true", help="really allocate --oom-mb instead of simulating")
     p.add_argument("--preflight", action="store_true", help="run the fake preflight check and exit")
     args = p.parse_args(argv)
     if args.preflight:

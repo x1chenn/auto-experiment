@@ -329,6 +329,63 @@ def cmd_decide(args) -> int:
     return 0
 
 
+def cmd_note(args) -> int:
+    cfg = _cfg()
+    log = EventLog(cfg)
+    if args.campaign and args.campaign not in State.load(log).campaigns:
+        print(f"no campaign {args.campaign}")
+        return 2
+    log.append("note.added", {"text": args.text, "campaign": args.campaign})
+    print("noted")
+    return 0
+
+
+def cmd_finding(args) -> int:
+    cfg = _cfg()
+    from .archive import add_finding, render_findings, update_finding
+    log = EventLog(cfg)
+    state = State.load(log)
+    if args.action == "add":
+        if not args.text:
+            print("usage: autoexp finding add \"<claim>\" --campaign C [--stage S] [--evidence RUN_ID ...]")
+            return 2
+        fid, warnings = add_finding(log, state, args.text, campaign=args.campaign, stage=args.stage,
+                                    evidence=args.evidence, status=args.status or "tentative",
+                                    part=args.part, supersedes=args.supersedes)
+        print(fid)
+        for w in warnings:
+            print(f"warning: {w}")
+    elif args.action == "update":
+        update_finding(log, state, args.text, args.status, args.why)
+        print(f"{args.text} -> {args.status}")
+    else:
+        print(render_findings(state), end="")
+    return 0
+
+
+def cmd_archive(args) -> int:
+    cfg = _cfg()
+    from .archive import update
+    eng = _engine(cfg)
+    specs = {n: eng.spec(n).data for n in eng.state.campaigns}
+    res = update(cfg, EventLog(cfg), specs=specs, days=args.day, rebuild=args.rebuild)
+    print(f"archive: {res['root']}")
+    for w in res["written"]:
+        print(f"  wrote {w}")
+    return 0
+
+
+def cmd_memory(args) -> int:
+    cfg = _cfg()
+    from .archive import archive_dir, update
+    path = archive_dir(cfg) / "MEMORY.md"
+    if args.refresh or not path.exists():
+        eng = _engine(cfg)
+        update(cfg, EventLog(cfg), specs={n: eng.spec(n).data for n in eng.state.campaigns})
+    print(path.read_text(), end="")
+    return 0
+
+
 def cmd_hook(args) -> int:
     from .hooks import run_hook
     return run_hook(load_config(), args.event, args.vendor)
@@ -453,6 +510,32 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--why", required=True)
     s.add_argument("--campaign")
     s.set_defaults(fn=cmd_decide)
+
+    s = sub.add_parser("note", help="add a free-text note to the record (optionally for a campaign)")
+    s.add_argument("text")
+    s.add_argument("--campaign")
+    s.set_defaults(fn=cmd_note)
+
+    s = sub.add_parser("finding", help="the findings ledger: claims with evidence and a status")
+    s.add_argument("action", choices=["add", "update", "list"])
+    s.add_argument("text", nargs="?", help="claim (add) or finding id (update)")
+    s.add_argument("--campaign")
+    s.add_argument("--stage", help="cite the frozen results of this stage")
+    s.add_argument("--evidence", action="append", help="run id, finding id, job:<id>, commit:<sha>, file:<path>")
+    s.add_argument("--status", choices=["tentative", "supported", "refuted", "superseded"])
+    s.add_argument("--why")
+    s.add_argument("--part")
+    s.add_argument("--supersedes")
+    s.set_defaults(fn=cmd_finding)
+
+    s = sub.add_parser("archive", help="regenerate journals, notebooks, FINDINGS.md and MEMORY.md")
+    s.add_argument("--day", action="append", help="YYYY-MM-DD (repeatable); default today and yesterday")
+    s.add_argument("--rebuild", action="store_true", help="regenerate every day")
+    s.set_defaults(fn=cmd_archive)
+
+    s = sub.add_parser("memory", help="print MEMORY.md, the long-term index")
+    s.add_argument("--refresh", action="store_true")
+    s.set_defaults(fn=cmd_memory)
 
     s = sub.add_parser("hook", help="agent lifecycle hook (reads JSON on stdin)")
     s.add_argument("event", choices=["session-start", "pre-compact", "session-end"])

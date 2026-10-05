@@ -73,6 +73,24 @@ analysis: {primary: eval/return, result_file: final_eval.json}
 Specs are strict: unknown keys, unknown `{placeholders}` and grid parameters that the command
 never uses are errors. A submitted spec is frozen; editing the file later changes nothing.
 
+## Memory that survives long sessions
+
+Conversation memory is never trusted. Results are frozen into the event log when a stage
+completes, and knowledge is recorded as it appears:
+
+```bash
+autoexp finding add "lr=3e-4 beats 1e-3 by 8%" --campaign lr-sweep --stage full   # cites the frozen table
+autoexp finding update F212 --status supported --why "5 seeds, disjoint CIs"
+autoexp note "pilot looked noisy on seed 2; check the env version" --campaign lr-sweep
+autoexp memory                                     # the long-term index
+```
+
+The brain keeps a generated archive current: `MEMORY.md` (≤ 150 lines: established findings,
+campaigns by part, decisions, open items), `FINDINGS.md` (numbered ledger with status
+history), one notebook per campaign (frozen results per stage, failures, timeline), daily
+journals and weekly rollups. A session that was just compacted gets MEMORY and HANDOFF
+re-injected by the SessionStart hook.
+
 ## Handover protocol
 
 ```bash
@@ -88,8 +106,9 @@ Code and Codex are in `examples/hooks/`.
 
 ## Status
 
-Milestone M0/M1 of `docs/DESIGN.md`: spec, engine, runner, failure classification, node
-registry, stages with approval, brain, deterministic brief, handover protocol, canary.
+Milestones M0–M1.5 of `docs/DESIGN.md`: spec, engine, runner, failure classification, node
+registry, stages with approval, brain, deterministic brief, handover protocol, memory
+consolidation, canary.
 Next: model-written analysis with a critic from another vendor, failure diagnosis, proposals.
 
 ## Development

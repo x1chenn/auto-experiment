@@ -1,6 +1,6 @@
 # auto-experiment — design
 
-Status: v0.1 (milestones M0–M1 implemented). This document is the reference for anyone,
+Status: v0.1 (milestones M0–M1.5 implemented). This document is the reference for anyone,
 human or agent, changing the system.
 
 ## 1. Purpose
@@ -15,7 +15,8 @@ Slurm cluster with as little babysitting as possible:
 3. **Close the loop.** Smoke-test new work automatically, scale it up through gates, and
    (later) propose the next experiments as concrete specs.
 4. **Heal infrastructure overnight.** Bad nodes, OOM, time limits, preemption, hangs.
-5. **Hand over seamlessly** between sessions, model sizes and vendors (§9).
+5. **Hand over seamlessly** between sessions, model sizes and vendors (§9), and
+6. **never forget an important result** across long sessions and weeks (§10).
 
 Non-goals: replacing Slurm, replacing experiment dashboards, writing papers, or letting a
 model make scientific decisions without a human.
@@ -158,7 +159,48 @@ vendors read only AGENTS.md and answer a quiz generated from the state (what is 
 next task and its acceptance criterion, the last decision and why, what is forbidden), plus
 one practical task. Pass rates per model are the adaptability metric.
 
-## 10. Model roles (planned, M2–M4)
+## 10. Memory consolidation
+
+Long sessions lose detail when their context is compacted, and people forget what was
+learned three weeks ago. Conversation memory is therefore never relied upon; knowledge is
+written into the event log as it is produced and consolidated into bounded documents.
+
+**What enters memory (events only):** frozen stage results (`stage.results`, emitted by the
+engine when a stage completes, so tables survive deleted run directories), findings
+(`autoexp finding add`, claims with evidence), notes (`autoexp note`), decisions, batons,
+failure classes and node flags.
+
+**Findings ledger.** Each finding has an id from its event sequence (`F<seq>`), a claim, a
+scope (part / campaign / stage), evidence that must resolve (a frozen results table, run ids,
+`job:`, `commit:`, `file:`, `url:`), and a status: `tentative → supported | refuted`, or
+`superseded` by a newer finding. Findings are never edited; re-rating appends history. Numbers
+in a claim that do not occur in the cited table (or in the arm labels) produce a warning.
+
+**Generated documents (`$AUTOEXP_HOME/archive`, or `archive_dir`):**
+
+| Document | Scope | Size | Purpose |
+|---|---|---|---|
+| `MEMORY.md` | everything | ≤ 150 lines | long-term index: supported findings (kept until superseded), tentative ones, campaigns grouped by part with their latest headline result, decisions, what is open, links |
+| `FINDINGS.md` | all findings | grows | the ledger with status history |
+| `notebooks/<campaign>.md` | one campaign | grows slowly | intent, stages, frozen results per stage with run ids, findings, failures, timeline, notes |
+| `journal/YYYY-MM-DD.md` | one day | bounded by activity | progress per campaign, results frozen that day, findings, decisions, notes, infrastructure, tasks, sessions and batons |
+| `journal/weekly/YYYY-Www.md` | one week | one line per day | rollup with links to the daily journals |
+
+Generation is deterministic and incremental: the brain regenerates today's and yesterday's
+journals, the notebooks, the ledger and the index on every tick; `autoexp archive --rebuild`
+regenerates everything. Journals and notebooks contain no wall-clock timestamp, so unchanged
+inputs produce byte-identical files and the archive can be versioned in a private repository.
+
+**Reading cost is bounded:** a new or compacted session reads MEMORY (≤ 150 lines) and HANDOFF
+(≤ 200 lines), then only the notebook of its campaign. The SessionStart hook injects both;
+when the session was just compacted it also warns the agent to trust the archive over its
+own recollection, and records the compaction as a note.
+
+**Writing discipline (in AGENTS.md):** record a finding or note at every milestone rather than
+at the end; never edit generated documents; agents propose findings as `tentative`, and
+promoting one to `supported` needs a strong-tier agent or a human.
+
+## 11. Model roles (planned, M2–M4)
 
 | Role | Input | Output | Guard |
 |---|---|---|---|
@@ -172,7 +214,7 @@ Models are called through official CLIs in headless mode (`claude -p --json-sche
 `codex exec --output-schema`) with subscription or API credentials kept outside the repo,
 only when the deterministic tick saw a change, and with a daily cap.
 
-## 11. Prior art and what we took
+## 12. Prior art and what we took
 
 - **seml** — explicit scheduler-state mapping, config-hash dedup, reconciliation.
 - **submitit** — checkpoint-then-requeue semantics.
@@ -187,12 +229,13 @@ only when the deterministic tick saw a change, and with a daily cap.
   writers, waking the model only when there is work, approvals bound to the requesting client.
 - **xgenius** — safety limits enforced in code for agent-driven Slurm use.
 
-## 12. Roadmap
+## 13. Roadmap
 
 | Milestone | Content | Status |
 |---|---|---|
 | M0 | specs, engine, runner, contracts, node registry, CLI, canary | done |
-| M1 | brain, deterministic brief, handoff/batons/tasks, hooks | done (field test running) |
+| M1 | brain, deterministic brief, handoff/batons/tasks, hooks | done (field-tested) |
+| M1.5 | memory consolidation: frozen results, findings ledger, journals, notebooks, MEMORY.md | done |
 | M2 | analyst + critic, insight ledger, doctor (read-only), `autoexp drill` | next |
 | M3 | proposals queue, gates with conditions, MCP server | |
 | M4 | planner, numeric search via ask/tell | |

@@ -22,6 +22,7 @@ import traceback
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from .archive import update as archive_update
 from .brief import render_brief, write_brief
 from .config import Config
 from .engine import AUTOEXP_SRC, Engine
@@ -94,15 +95,18 @@ class Brain:
 
     def one_tick(self) -> Dict[str, Any]:
         eng = Engine(self.cfg, self.backend, self.log, echo=lambda m: print(f"[brain {now()}] {m}", flush=True))
-        summary = eng.tick()
+        summary = eng.tick(wait=60)
+        if summary.get("skipped"):
+            return summary
         if summary["finished"] or summary["submitted"] or summary["stalled"]:
             self.log.append("brain.tick", summary)
         closed = close_unclean_sessions(self.cfg, self.log, eng.state)
         if closed:
             eng.state = type(eng.state).load(self.log)
         write_handoff(self.cfg, eng.state)
+        specs = {n: eng.spec(n).data for n in eng.state.campaigns}
+        archive_update(self.cfg, self.log, specs=specs)
         if self.due_for_brief():
-            specs = {n: eng.spec(n).data for n in eng.state.campaigns}
             path = write_brief(self.cfg, render_brief(self.cfg, eng.state, specs))
             self.log.append("brief.written", {"path": str(path)})
         return summary
