@@ -1,0 +1,17 @@
+# Copy to ~/.autoexp/config.yaml and adapt. Keep this file out of any repository.
+python: /usr/bin/python3          # must exist on compute nodes; the runner needs no extra packages
+shared: /path/visible/to/your/group/autoexp_shared   # node registry + signatures for the group
+default_partition: cpu            # used by specs that do not name a partition
+auto_stages: [smoke, pilot]       # stages allowed to start without a human
+max_active_jobs: 50
+sbatch:
+  account: my_account
+  comment: null                   # only if your cluster requires a --comment
+  lines: []                       # e.g. ["--qos=normal"]
+brain:
+  partition: long_cpu             # a CPU partition that allows multi-day jobs
+  cpus: 1
+  mem: 2G
+  time: "7-00:00:00"
+  tick_seconds: 120
+  brief_at: "06:30"

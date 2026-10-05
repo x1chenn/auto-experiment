@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+.venv/
+# experiment outputs and local state never belong in the repo
+runs/
+autoexp_runs/
+.autoexp/
+*.out

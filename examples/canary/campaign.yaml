@@ -1,0 +1,59 @@
+# Canary campaign: a cheap, long-running synthetic "training" with known ground truth.
+# One CPU core and ~100 MB per run; most of the time is spent sleeping.
+#
+#   autoexp submit examples/canary/campaign.yaml
+#
+# smoke and pilot start automatically; full waits for `autoexp approve canary full`.
+# Ground truth: lr=3e-4 ends ~8% above lr=1e-3; beta has no effect.
+
+name: canary
+hypothesis: "lr=3e-4 reaches a higher final eval/return than lr=1e-3; beta has no effect"
+success: "lr=3e-4 arms beat lr=1e-3 arms on IQM with non-overlapping 95% CIs; beta arms tie"
+test: true                 # node flags raised by this campaign stay scoped to it
+
+run_root: ./runs           # relative to this file; point it at scratch space for real work
+command: >-
+  PYTHONPATH={autoexp_src} {python} -m autoexp.canary --out {run_dir}
+  --steps {steps} --lr {lr} --beta {beta} --seed {seed}
+  --seconds-per-step {seconds_per_step} --fault {fault}
+
+params:
+  lr: [0.0003, 0.001]
+  beta: [0.1, 0.9]
+fixed:
+  steps: 7200              # 2 h at 1 s/step
+  seconds_per_step: 1.0
+  fault: none
+seeds: [0, 1, 2, 3, 4]
+
+resources:                 # partition comes from `default_partition` in your config
+  cpus: 1
+  mem: 1G
+  time: "03:00:00"
+
+stages:
+  - name: smoke
+    seeds: [0]
+    set: {steps: 30, seconds_per_step: 0.5}
+    resources: {time: "00:10:00"}
+    auto: true
+  - name: pilot
+    seeds: [0, 1]
+    set: {steps: 900}
+    resources: {time: "00:30:00"}
+    auto: true
+  - name: full
+    auto: false
+
+contract:
+  files: [final_eval.json]
+  metrics_file: metrics.jsonl
+  metric_keys: [eval/return, train/loss]
+  final_step_at_least: "{steps}"
+  echo_file: config_echo.json
+  echo_keys: [lr, beta, steps, seed]
+  finite: {file: final_eval.json, keys: [eval/return]}
+
+progress: {file: metrics.jsonl, stall_minutes: 20}
+resume: {enabled: true, signal_seconds: 120}
+analysis: {primary: eval/return, result_file: final_eval.json, higher_is_better: true}

@@ -1,0 +1,58 @@
+# Fault matrix: one run per injected failure. Each must be classified correctly,
+# and the retryable ones must end up succeeding. About 20 minutes on one CPU per run.
+#
+#   autoexp submit examples/canary/faults.yaml
+#
+# Expected outcome per arm (see `autoexp runs canary-faults`):
+#   none        ok
+#   crash       failed: code                      (never retried: a bug stays a bug)
+#   preflight   infra/node, then ok               (node excluded for this campaign only)
+#   exit0       failed: contract                  (exit code 0 is not success)
+#   nan         failed: diverged
+#   hang        infra/hung, then ok               (stall detected, job cancelled, retried)
+#   oom         infra/oom, then ok                (memory raised 1.5x)
+#   ignore_beta failed: config_mismatch           (the program silently ignored --beta)
+#   slow        ok after restarts                 (checkpoint on SIGUSR1, requeue, resume)
+# The stage tolerates exactly those four failures (max_failures: 4); anything else blocks it.
+
+name: canary-faults
+hypothesis: "every injected failure is classified correctly and every retryable one recovers"
+test: true
+run_root: ./runs
+command: >-
+  PYTHONPATH={autoexp_src} {python} -m autoexp.canary --out {run_dir}
+  --steps {steps} --lr 0.0003 --beta {beta} --seed {seed}
+  --seconds-per-step {seconds_per_step} --fault {fault} --oom-mb 1500
+
+params:
+  fault: [none, crash, preflight, exit0, nan, hang, oom, ignore_beta, slow]
+fixed:
+  steps: 240
+  seconds_per_step: 1.0
+  beta: 0.9
+seeds: [0]
+
+resources: {cpus: 1, mem: 1G, time: "00:15:00"}
+
+stages:
+  - name: faults
+    auto: true
+    max_failures: 4
+
+preflight:
+  - name: fake-cuda-check
+    cmd: "PYTHONPATH={autoexp_src} {python} -m autoexp.canary --preflight --fault {fault}"
+    timeout: 60
+
+contract:
+  files: [final_eval.json]
+  metrics_file: metrics.jsonl
+  metric_keys: [eval/return]
+  final_step_at_least: "{steps}"
+  echo_file: config_echo.json
+  echo_keys: [beta, steps, seed]
+  finite: {file: final_eval.json, keys: [eval/return]}
+
+progress: {file: metrics.jsonl, stall_minutes: 3}
+resume: {enabled: true, signal_seconds: 90}
+analysis: {primary: eval/return, result_file: final_eval.json}

@@ -1,0 +1,13 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {"hooks": [{"type": "command", "command": "autoexp hook session-start --vendor codex"}]}
+    ],
+    "PreCompact": [
+      {"hooks": [{"type": "command", "command": "autoexp hook pre-compact --vendor codex"}]}
+    ],
+    "SessionEnd": [
+      {"hooks": [{"type": "command", "command": "autoexp hook session-end --vendor codex"}]}
+    ]
+  }
+}

@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Run auto-experiment from a checkout without installing it.
+here="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+export PYTHONPATH="$here/src${PYTHONPATH:+:$PYTHONPATH}"
+exec "${AUTOEXP_PYTHON:-python3}" -m autoexp "$@"
