@@ -24,6 +24,14 @@ Copy `codex-hooks.json` to `~/.codex/hooks.json` (or `<repo>/.codex/hooks.json`)
 non-managed hook only after you trust its exact definition: open Codex and run `/hooks` once
 (and again whenever the file changes). Untrusted hooks are skipped silently.
 
-## Headless model calls
-Batch jobs that call `claude -p` or `codex exec` for analysis do not need the handover context;
-run them with `--bare` (Claude Code) so user-level hooks are not applied.
+## Headless model calls from batch jobs
+Analysis calls made by the brain do not need the handover context and must not share the
+interactive login. Give them their own configuration directory and credentials:
+
+- Claude Code: `CLAUDE_CONFIG_DIR=<private dir> CLAUDE_CODE_OAUTH_TOKEN=$(cat <token file>) claude -p ...`
+  (the token comes from `claude setup-token`). A separate config directory loads no user-level
+  hooks or settings and never refreshes the interactive session's credentials. Do not use
+  `--bare` with a subscription token: bare mode ignores OAuth and accepts only an API key.
+- Codex: `CODEX_HOME=<private dir> codex exec ...` after a one-time
+  `mkdir -p -m 700 <private dir> && CODEX_HOME=<private dir> codex login --device-auth`
+  (Codex refuses a `CODEX_HOME` that does not exist yet).

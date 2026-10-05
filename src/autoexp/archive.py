@@ -576,6 +576,7 @@ STATE_GITIGNORE = """\
 # auto-experiment state repository: secrets, locks and volatile files stay out
 secrets/
 codex_home/
+claude_home/
 logs/
 local_backend/
 *.lock
