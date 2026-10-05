@@ -8,6 +8,10 @@ sbatch:
   account: my_account
   comment: null                   # only if your cluster requires a --comment
   lines: []                       # e.g. ["--qos=normal"]
+state_git:                        # version this directory in a private git repository
+  enabled: true                   # after `autoexp archive --git-init`
+  every_minutes: 60
+  push: false                     # true: push to the repository's first remote
 brain:
   partition: long_cpu             # a CPU partition that allows multi-day jobs
   cpus: 1

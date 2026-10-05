@@ -568,3 +568,73 @@ def update(cfg: Config, log: EventLog, specs: Optional[Dict[str, Dict[str, Any]]
     atomic_write(root / "MEMORY.md", render_memory(state, all_days, weeks, journal_lines))
     written.append("MEMORY.md")
     return {"root": str(root), "written": written, "state": state}
+
+
+# ---------------------------------------------------------------- versioning the state
+
+STATE_GITIGNORE = """\
+# auto-experiment state repository: secrets, locks and volatile files stay out
+secrets/
+codex_home/
+logs/
+local_backend/
+*.lock
+brain.lease
+brain.sbatch
+*.tmp
+.*.tmp
+"""
+
+
+def _git(root: Path, *args: str, timeout: int = 120):
+    import subprocess
+    return subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True, timeout=timeout)
+
+
+def git_init(cfg: Config) -> str:
+    """Make the state directory a git repository (events, archive, specs, batons)."""
+    root = cfg.home
+    gi = root / ".gitignore"
+    if not gi.exists():
+        atomic_write(gi, STATE_GITIGNORE)
+    if not (root / ".git").exists():
+        proc = _git(root, "init", "-q")
+        if proc.returncode != 0:
+            raise RuntimeError(proc.stderr.strip())
+        _git(root, "checkout", "-q", "-b", "main")
+    return str(root)
+
+
+def git_commit(cfg: Config, message: Optional[str] = None, push: Optional[bool] = None) -> Dict[str, Any]:
+    """Commit the state directory if it is a git repository and something changed.
+    Pushing is optional and never raises: a network hiccup must not stop the brain."""
+    root = cfg.home
+    if not (root / ".git").exists():
+        return {"committed": False, "reason": "not a git repository (run `autoexp archive --git-init`)"}
+    _git(root, "add", "-A")
+    if _git(root, "diff", "--cached", "--quiet").returncode == 0:
+        return {"committed": False, "reason": "no changes"}
+    seq = (cfg.events_dir / ".seq").read_text().strip() if (cfg.events_dir / ".seq").exists() else "?"
+    msg = message or f"autoexp state: events up to #{seq} ({now()})"
+    proc = _git(root, "commit", "-q", "-m", msg)
+    if proc.returncode != 0:
+        return {"committed": False, "reason": proc.stderr.strip()[:300]}
+    out: Dict[str, Any] = {"committed": True, "message": msg}
+    settings = cfg.get("state_git") or {}
+    if push if push is not None else settings.get("push"):
+        remotes = _git(root, "remote").stdout.split()
+        if remotes:
+            pr = _git(root, "push", "-q", remotes[0], "HEAD", timeout=120)
+            out["pushed"] = pr.returncode == 0
+            if pr.returncode != 0:
+                out["push_error"] = pr.stderr.strip()[:300]
+    return out
+
+
+def git_due(cfg: Config) -> bool:
+    settings = cfg.get("state_git") or {}
+    if not settings.get("enabled") or not (cfg.home / ".git").exists():
+        return False
+    last = _git(cfg.home, "log", "-1", "--format=%ct").stdout.strip()
+    import time
+    return not last or time.time() - int(last) >= 60 * float(settings.get("every_minutes", 60))

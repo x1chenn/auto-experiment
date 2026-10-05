@@ -365,13 +365,17 @@ def cmd_finding(args) -> int:
 
 def cmd_archive(args) -> int:
     cfg = _cfg()
-    from .archive import update
+    from .archive import git_commit, git_init, update
+    if args.git_init:
+        print(f"state repository: {git_init(cfg)} (set state_git.enabled: true in config.yaml)")
     eng = _engine(cfg)
     specs = {n: eng.spec(n).data for n in eng.state.campaigns}
     res = update(cfg, EventLog(cfg), specs=specs, days=args.day, rebuild=args.rebuild)
     print(f"archive: {res['root']}")
     for w in res["written"]:
         print(f"  wrote {w}")
+    if args.commit or args.git_init:
+        print(json.dumps(git_commit(cfg, push=args.push or None)))
     return 0
 
 
@@ -531,6 +535,9 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("archive", help="regenerate journals, notebooks, FINDINGS.md and MEMORY.md")
     s.add_argument("--day", action="append", help="YYYY-MM-DD (repeatable); default today and yesterday")
     s.add_argument("--rebuild", action="store_true", help="regenerate every day")
+    s.add_argument("--git-init", action="store_true", help="make the state directory a git repository")
+    s.add_argument("--commit", action="store_true", help="commit the state directory now")
+    s.add_argument("--push", action="store_true", help="with --commit: also push to the first remote")
     s.set_defaults(fn=cmd_archive)
 
     s = sub.add_parser("memory", help="print MEMORY.md, the long-term index")

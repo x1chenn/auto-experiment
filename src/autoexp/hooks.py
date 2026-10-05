@@ -22,8 +22,7 @@ from typing import Any, Dict, Optional
 
 from .config import Config
 from .events import EventLog, State
-from .handoff import (baton_write, guess_tier, reconstruct_baton, render_handoff, session_end,
-                      session_start)
+from .handoff import guess_tier, render_handoff, session_end, session_start
 
 PROTOCOL_REMINDER = """\
 [auto-experiment] You are session {sid}. Protocol: (1) MEMORY below is what we know, HANDOFF is
@@ -85,39 +84,62 @@ def run_hook(cfg: Config, event: str, vendor: str) -> int:
         return 0
 
 
+HANDOFF_FRESH_S = 1800
+
+
+def _handoff_text(cfg: Config, tier: str) -> str:
+    """The brain rewrites HANDOFF.md every tick; reuse it when fresh, render only as a fallback."""
+    from .util import age_seconds, now  # noqa: F401
+    try:
+        age = __import__("time").time() - cfg.handoff_path.stat().st_mtime
+        if age < HANDOFF_FRESH_S:
+            return cfg.handoff_path.read_text()
+    except OSError:
+        pass
+    return render_handoff(cfg, State.load(EventLog(cfg)), tier=tier)
+
+
 def _run(cfg: Config, event: str, vendor: str) -> int:
+    """Hot paths read two small files and append at most two events: Codex gives
+    SessionEnd hooks one to three seconds."""
+    from .handoff import marker_path, read_marker
     payload = _payload()
     log = EventLog(cfg)
-    state = State.load(log)
     sid = _sid(vendor, payload)
     model = _model(payload)
+    transcript = payload.get("transcript_path")
 
     if event == "session-start":
-        if sid is None or sid not in state.sessions:
+        marker = read_marker(cfg, sid) if sid else None
+        if marker is None:
             sid = session_start(log, vendor, model, purpose="", session=sid)
-            state = State.load(log)
+            marker = read_marker(cfg, sid) or {}
         env_file = os.environ.get("CLAUDE_ENV_FILE")
         if env_file:
             with open(env_file, "a") as fh:
                 fh.write(f"export AUTOEXP_SESSION={sid}\nexport AUTOEXP_AGENT={vendor}\n")
                 if model:
                     fh.write(f"export AUTOEXP_MODEL='{model}'\n")
-        tier = state.sessions.get(sid, {}).get("tier") or guess_tier(model)
+        tier = marker.get("tier") or guess_tier(model)
         context = PROTOCOL_REMINDER.format(sid=sid)
         if payload.get("source") == "compact":
             context += "\n" + COMPACTED
             log.append("note.added", {"text": f"session {sid} was compacted and re-grounded from MEMORY/HANDOFF",
                                       "kind": "compaction"})
-        context += "\n" + _memory_digest(cfg) + "\n" + render_handoff(cfg, state, tier=tier)
+        context += "\n" + _memory_digest(cfg) + "\n" + _handoff_text(cfg, tier)
         print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart",
                                                  "additionalContext": context}}))
         return 0
 
-    if event in ("pre-compact", "session-end"):
-        if sid and sid in state.sessions and not state.sessions[sid].get("baton"):
-            baton_write(cfg, log, sid, reconstruct_baton(state, sid), reconstructed=True)
-        if event == "session-end" and sid and sid in state.sessions:
-            session_end(log, sid)
+    if event == "pre-compact":
+        if sid and read_marker(cfg, sid) is not None:
+            log.append("session.compacting", {"session": sid, "transcript": transcript})
+        return 0
+
+    if event == "session-end":
+        marker = read_marker(cfg, sid) if sid else None
+        if marker is not None and not marker.get("ended"):
+            session_end(log, sid, transcript=transcript)  # the brain reconstructs a missing baton
         return 0
 
     print(f"[autoexp hook] unknown event {event}", file=sys.stderr)

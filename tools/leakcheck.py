@@ -79,7 +79,8 @@ def main() -> int:
         for lineno, line in enumerate(text.splitlines(), 1):
             for name, rx in patterns:
                 for m in rx.finditer(line):
-                    if name == "e-mail address" and m.group(0) in ALLOWED_EMAILS:
+                    if name == "e-mail address" and (m.group(0) in ALLOWED_EMAILS
+                                                     or re.search(r"@example\.(org|com|net)$", m.group(0))):
                         continue
                     hits += 1
                     # never echo the private term itself, only where it is

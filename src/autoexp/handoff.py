@@ -29,6 +29,22 @@ HANDOFF_MAX_LINES = 200
 
 # ---------------------------------------------------------------- sessions
 
+def marker_path(cfg: Config, sid: str) -> Path:
+    """Tiny per-session file so hooks can answer "known? baton?" without replaying the log."""
+    return cfg.sessions_dir / f"{sid}.json"
+
+
+def read_marker(cfg: Config, sid: str) -> Optional[Dict[str, Any]]:
+    return read_json(marker_path(cfg, sid))
+
+
+def _update_marker(cfg: Config, sid: str, **fields: Any) -> None:
+    from .util import write_json
+    m = read_marker(cfg, sid) or {"session": sid}
+    m.update(fields)
+    write_json(marker_path(cfg, sid), m)
+
+
 def session_start(log: EventLog, agent: str, model: str = "", purpose: str = "",
                   session: Optional[str] = None, tier: Optional[str] = None) -> str:
     sid = session or new_id(f"s-{(agent or 'human')[:10]}-")
@@ -36,11 +52,14 @@ def session_start(log: EventLog, agent: str, model: str = "", purpose: str = "",
                                    "purpose": purpose, "tier": tier or guess_tier(model),
                                    "cwd": os.getcwd()},
                actor=_actor(sid, agent, model))
+    _update_marker(log.cfg, sid, started=now(), agent=agent, model=model, tier=tier or guess_tier(model),
+                   baton=False, ended=False)
     return sid
 
 
-def session_end(log: EventLog, sid: str) -> None:
-    log.append("session.ended", {"session": sid}, actor=_actor(sid))
+def session_end(log: EventLog, sid: str, **extra: Any) -> None:
+    log.append("session.ended", dict({"session": sid}, **extra), actor=_actor(sid))
+    _update_marker(log.cfg, sid, ended=True)
 
 
 def guess_tier(model: str) -> str:
@@ -76,6 +95,7 @@ def baton_write(cfg: Config, log: EventLog, sid: str, fields: Dict[str, Any],
     log.append("baton.written", data, actor=_actor(sid))
     path = cfg.sessions_dir / f"{sid}.baton.md"
     atomic_write(path, render_baton(data, now()))
+    _update_marker(cfg, sid, baton=True)
     return data
 
 
@@ -90,10 +110,13 @@ def reconstruct_baton(state: State, sid: str) -> Dict[str, Any]:
             if started and att.get("submitted", "") >= started and (not sess.get("ended") or att["submitted"] <= sess["ended"]):
                 (done if att["finished"] else in_flight).append(
                     f"job {att['job_id']} {run['run_id']} -> {att.get('classification') or att.get('state')}")
-    return {"goal": sess.get("purpose") or "(not recorded)",
-            "done": done[-20:] or [f"{state.by_session.get(sid, 0)} recorded actions; see `autoexp log --session {sid}`"],
-            "in_flight": in_flight[-20:],
-            "unverified": ["reconstructed automatically: the session ended without writing a baton"]}
+    out = {"goal": sess.get("purpose") or "(not recorded)",
+           "done": done[-20:] or [f"{state.by_session.get(sid, 0)} recorded actions; see `autoexp log --session {sid}`"],
+           "in_flight": in_flight[-20:],
+           "unverified": ["reconstructed automatically: the session ended without writing a baton"]}
+    if sess.get("transcripts"):
+        out["touched"] = [f"transcript: {t}" for t in sess["transcripts"][-3:]]
+    return out
 
 
 def render_baton(b: Dict[str, Any], ts: str) -> str:
@@ -121,12 +144,16 @@ def close_unclean_sessions(cfg: Config, log: EventLog, state: State) -> List[str
     limit = cfg["watch"]["session_unclean_hours"] * 3600
     closed = []
     for sid, s in state.sessions.items():
-        if s.get("baton") or s.get("ended"):
+        if s.get("baton"):
+            continue
+        if s.get("ended"):  # ended (e.g. by a hook) without a baton: reconstruct one now
+            baton_write(cfg, log, sid, reconstruct_baton(state, sid), reconstructed=True)
+            closed.append(sid)
             continue
         quiet = age_seconds(s.get("last_ts") or s.get("started")) or 0
         if quiet > limit:
             baton_write(cfg, log, sid, reconstruct_baton(state, sid), reconstructed=True)
-            log.append("session.ended", {"session": sid, "unclean": True})
+            session_end(log, sid, unclean=True)
             closed.append(sid)
     return closed
 

@@ -1,13 +1,37 @@
 {
   "hooks": {
     "SessionStart": [
-      {"hooks": [{"type": "command", "command": "autoexp hook session-start --vendor claude"}]}
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "autoexp hook session-start --vendor claude",
+            "timeout": 30
+          }
+        ]
+      }
     ],
     "PreCompact": [
-      {"hooks": [{"type": "command", "command": "autoexp hook pre-compact --vendor claude"}]}
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "autoexp hook pre-compact --vendor claude",
+            "timeout": 30
+          }
+        ]
+      }
     ],
     "SessionEnd": [
-      {"hooks": [{"type": "command", "command": "autoexp hook session-end --vendor claude"}]}
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "autoexp hook session-end --vendor claude",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }

@@ -121,5 +121,23 @@ class ArchiveTests(unittest.TestCase):
         self.assertIn("# HANDOFF", ctx)
 
 
+    def test_state_git(self):
+        import subprocess
+        self.cfg.data["state_git"] = {"enabled": True, "every_minutes": 60, "push": False}
+        archive.git_init(self.cfg)
+        subprocess.run(["git", "-C", str(self.cfg.home), "config", "user.name", "t"], check=True)
+        subprocess.run(["git", "-C", str(self.cfg.home), "config", "user.email", "t@example.org"], check=True)
+        (self.cfg.home / "secrets").mkdir()
+        (self.cfg.home / "secrets" / "token").write_text("x")
+        self.assertTrue(archive.git_due(self.cfg))
+        self.assertTrue(archive.git_commit(self.cfg)["committed"])
+        files = subprocess.run(["git", "-C", str(self.cfg.home), "ls-files"], capture_output=True,
+                               text=True).stdout.split()
+        self.assertTrue(any(f.startswith("events/") for f in files))
+        self.assertFalse(any(f.startswith("secrets/") or f.endswith(".lock") for f in files))
+        self.assertFalse(archive.git_due(self.cfg))
+        self.assertEqual(archive.git_commit(self.cfg)["reason"], "no changes")
+
+
 if __name__ == "__main__":
     unittest.main()

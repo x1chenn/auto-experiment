@@ -71,11 +71,23 @@ class HandoffTests(unittest.TestCase):
         self.assertIn("claude-abcdef123456", ctx)
         self.assertIn("HANDOFF", ctx)
         self.assertIn("AUTOEXP_SESSION=claude-abcdef123456", env_file.read_text())
-        with mock.patch.object(sys, "stdin", io.StringIO(payload)):
+        end_payload = json.dumps({"session_id": "abcdef1234567890", "transcript_path": "/tmp/t.jsonl"})
+        with mock.patch.object(sys, "stdin", io.StringIO(end_payload)):
             run_hook(self.cfg, "session-end", "claude")
         state = State.load(self.log)
         s = state.sessions["claude-abcdef123456"]
-        self.assertTrue(s["baton"] and s["ended"])
+        self.assertTrue(s["ended"])
+        self.assertFalse(s["baton"])  # the hook stays O(1); the brain writes the baton
+        handoff.close_unclean_sessions(self.cfg, self.log, state)
+        state = State.load(self.log)
+        self.assertTrue(state.sessions["claude-abcdef123456"]["baton"])
+        b = state.batons[-1]
+        self.assertTrue(b["reconstructed"])
+        self.assertIn("transcript: /tmp/t.jsonl", b["touched"])
+        # a second start of the same session (resume) does not register it again
+        with mock.patch.object(sys, "stdin", io.StringIO(payload)), mock.patch.object(sys, "stdout", io.StringIO()):
+            run_hook(self.cfg, "session-start", "claude")
+        self.assertEqual(sum(1 for e in self.log.iter() if e["type"] == "session.started"), 1)
 
     def test_hook_never_raises(self):
         with mock.patch.object(sys, "stdin", io.StringIO("not json")):

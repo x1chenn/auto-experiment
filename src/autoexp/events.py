@@ -252,6 +252,13 @@ class State:
         s = self.sessions.get(d["session"])
         if s:
             s["ended"] = ev["ts"]
+            if d.get("transcript"):
+                s.setdefault("transcripts", []).append(d["transcript"])
+
+    def _on_session_compacting(self, ev, d):
+        s = self.sessions.get(d["session"])
+        if s is not None and d.get("transcript"):
+            s.setdefault("transcripts", []).append(d["transcript"])
 
     def _on_baton_written(self, ev, d):
         self.batons.append(dict(d, ts=ev["ts"], actor=ev.get("actor")))

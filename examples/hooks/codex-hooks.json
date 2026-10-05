@@ -1,13 +1,40 @@
 {
+  "description": "auto-experiment: handover and memory hooks",
   "hooks": {
     "SessionStart": [
-      {"hooks": [{"type": "command", "command": "autoexp hook session-start --vendor codex"}]}
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "autoexp hook session-start --vendor codex",
+            "timeout": 30,
+            "statusMessage": "Loading auto-experiment memory",
+            "additionalContextLimit": 20000
+          }
+        ]
+      }
     ],
     "PreCompact": [
-      {"hooks": [{"type": "command", "command": "autoexp hook pre-compact --vendor codex"}]}
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "autoexp hook pre-compact --vendor codex",
+            "timeout": 30
+          }
+        ]
+      }
     ],
     "SessionEnd": [
-      {"hooks": [{"type": "command", "command": "autoexp hook session-end --vendor codex"}]}
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "autoexp hook session-end --vendor codex",
+            "timeout": 3
+          }
+        ]
+      }
     ]
   }
 }

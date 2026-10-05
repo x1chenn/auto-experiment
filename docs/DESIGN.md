@@ -78,9 +78,16 @@ cluster (thousands of jobs, roughly one in five ending abnormally):
   checkpoint, waits for the whole group, requeues, and finally checks the contract and writes
   `result.json`.
 - **Brain** (`brain.py`): the tick loop as a batch job on a CPU partition. A lease file with a
-  heartbeat (not a held lock) prevents two brains. Shortly before its time limit it requeues
-  itself under the same job id, which also works under a QOS allowing a single submitted job.
+  heartbeat (not a held lock) prevents two brains. A new brain takes the lease over at once if
+  the holder's batch job has already ended in the scheduler (processes stuck in filesystem I/O
+  can outlive their job by minutes), and otherwise waits up to one lease period; a displaced
+  holder stops at its next renewal. Only one tick runs at a time across all processes (a lock
+  file refreshed while held). Shortly before its time limit the brain requeues itself under
+  the same job id, which also works under a QOS allowing a single submitted job.
   `autoexp brain ensure` resubmits it if it died.
+- **State repository**: `autoexp archive --git-init` makes `$AUTOEXP_HOME` a git repository
+  (secrets, locks, logs excluded); with `state_git.enabled` the brain commits hourly and can
+  push to a private remote.
 - **Tags**: jobs carry `--job-name=ae:<campaign>:<stage>` and `--extra=ae:<run_id>;plan=<hash>`.
   `--comment` is left alone because some clusters use it for billing.
 
@@ -149,7 +156,10 @@ its tier may take on. Dangerous operations are blocked in code regardless of tie
 
 **Hooks**: Claude Code and Codex CLI expose the same lifecycle events (SessionStart,
 PreCompact, SessionEnd, …) and accept `additionalContext`; one `autoexp hook` command serves
-both (examples/hooks).
+both (examples/hooks). Hooks stay O(1): they read a per-session marker file and the generated
+HANDOFF/MEMORY files and append at most two events (Codex allows SessionEnd hooks 1–3 s); the
+brain writes the reconstructed baton afterwards. Codex runs a hook only after the user trusts
+its definition (`/hooks`).
 
 **Conflicting sources** (two skills, two notes) are never merged silently: the user decides
 which is authoritative.

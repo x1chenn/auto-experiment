@@ -22,6 +22,7 @@ import traceback
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from .archive import git_commit, git_due
 from .archive import update as archive_update
 from .brief import render_brief, write_brief
 from .config import Config
@@ -39,11 +40,26 @@ def _me() -> str:
     return f"{socket.gethostname().split('.')[0]}:{os.getpid()}"
 
 
-def acquire_lease(cfg: Config) -> bool:
+def _holder_job_dead(lease: Dict[str, Any], backend: Optional[Backend]) -> bool:
+    """True if the lease holder's batch job is already over according to the scheduler."""
+    job = lease.get("job")
+    if not job or backend is None or job == os.environ.get("SLURM_JOB_ID"):
+        return False
+    try:
+        info = backend.query([str(job)]).get(str(job))
+    except Exception:
+        return False
+    return info is not None and (info.terminal or info.state in ("COMPLETING", "STOPPED"))
+
+
+def acquire_lease(cfg: Config, backend: Optional[Backend] = None) -> bool:
+    """Take the lease if it is free, stale, or held by a job the scheduler has ended.
+    A holder that is still alive notices the takeover at its next renewal and stops."""
     with short_lock(cfg.home / ".lease.lock"):
         lease = read_json(cfg.lease_path) or {}
         age = age_seconds(lease.get("heartbeat"))
-        if lease and lease.get("holder") != _me() and age is not None and age < LEASE_STALE_S:
+        if (lease and lease.get("holder") != _me() and age is not None and age < LEASE_STALE_S
+                and not _holder_job_dead(lease, backend)):
             return False
         write_json(cfg.lease_path, {"holder": _me(), "host": socket.gethostname().split(".")[0],
                                     "pid": os.getpid(), "job": os.environ.get("SLURM_JOB_ID"),
@@ -106,6 +122,10 @@ class Brain:
         write_handoff(self.cfg, eng.state)
         specs = {n: eng.spec(n).data for n in eng.state.campaigns}
         archive_update(self.cfg, self.log, specs=specs)
+        if git_due(self.cfg):
+            res = git_commit(self.cfg)
+            if res.get("push_error"):
+                print(f"[brain {now()}] state push failed: {res['push_error']}", flush=True)
         if self.due_for_brief():
             path = write_brief(self.cfg, render_brief(self.cfg, eng.state, specs))
             self.log.append("brief.written", {"path": str(path)})
@@ -113,10 +133,16 @@ class Brain:
 
     def run(self, once: bool = False) -> int:
         self.cfg.ensure_dirs()
-        if not acquire_lease(self.cfg):
+        deadline = time.time() + LEASE_STALE_S + 60
+        while not acquire_lease(self.cfg, self.backend):
             lease = read_json(self.cfg.lease_path) or {}
-            print(f"another brain holds the lease ({lease.get('holder')}, job {lease.get('job')}); exiting")
-            return 1
+            if time.time() > deadline:
+                print(f"another brain keeps the lease ({lease.get('holder')}, job {lease.get('job')}); exiting",
+                      flush=True)
+                return 1
+            print(f"[brain {now()}] waiting for the lease held by {lease.get('holder')} (job {lease.get('job')})",
+                  flush=True)
+            time.sleep(15)
         signal.signal(signal.SIGUSR1, self._on_usr1)
         signal.signal(signal.SIGTERM, self._on_term)
         self.log.append("brain.started", {"host": socket.gethostname().split(".")[0], "pid": os.getpid(),

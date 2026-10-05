@@ -53,6 +53,8 @@ DEFAULTS: Dict[str, Any] = {
         "brief_at": "06:30",
         "lines": [],
     },
+    # Version the state directory with git (see `autoexp archive --git-init`).
+    "state_git": {"enabled": False, "every_minutes": 60, "push": False},
     "watch": {
         "heartbeat_stale_minutes": 20,
         "lost_after_minutes": 15,
@@ -179,6 +181,12 @@ sbatch:
   account: null        # e.g. my_lab_account
   comment: null        # only if your cluster wants a --comment (e.g. billing)
   lines: []            # extra raw options, e.g. ["--qos=normal"]
+
+# Commit the state directory (events, archive, specs, batons) to a private git repo.
+state_git:
+  enabled: false
+  every_minutes: 60
+  push: false          # push to the repo's first remote, e.g. a private GitHub repository
 
 brain:
   partition: null      # a CPU partition that allows long jobs

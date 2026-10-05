@@ -26,6 +26,7 @@ from .util import parse_time_s
 ACTIVE_STATES = {"PENDING", "RUNNING", "REQUEUED", "SUSPENDED", "CONFIGURING", "COMPLETING",
                  "RESIZING", "REQUEUE_HOLD", "REQUEUE_FED", "SIGNALING", "STAGE_OUT", "STOPPED",
                  "SUBMITTED"}
+LIVE_STATES = {"PENDING", "RUNNING", "REQUEUED", "SUSPENDED", "CONFIGURING", "REQUEUE_HOLD", "REQUEUE_FED"}
 TERMINAL_STATES = {"COMPLETED", "FAILED", "TIMEOUT", "NODE_FAIL", "OUT_OF_MEMORY", "CANCELLED",
                    "PREEMPTED", "BOOT_FAIL", "DEADLINE", "REVOKED", "SPECIAL_EXIT"}
 
@@ -186,10 +187,12 @@ class SlurmBackend(Backend):
         return {ln.strip() for ln in proc.stdout.splitlines() if ln.strip()}
 
     def find_jobs(self, name: str) -> List[str]:
+        # A job that is COMPLETING or STOPPED is already dead for our purposes: it must not
+        # stop a replacement from being submitted.
         user = os.environ.get("USER") or ""
         proc = self._run(["squeue", "-h", "-u", user, "-n", name, "-o", "%i|%T"])
         return [ln.split("|")[0] for ln in proc.stdout.splitlines()
-                if ln.strip() and normalize_state(ln.split("|")[1]) in ACTIVE_STATES]
+                if ln.strip() and normalize_state(ln.split("|")[1]) in LIVE_STATES]
 
 
 class LocalBackend(Backend):
